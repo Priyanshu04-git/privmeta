@@ -1,7 +1,7 @@
-import ExifReader, { type ExpandedTags } from "exifreader";
 import JSZip from "jszip";
 import { PDFDocument, PDFName } from "pdf-lib";
 import { getKindForFilename, type FileKind } from "./constants";
+import { stripContainerMetadata } from "./stripContainerMetadata";
 
 export type MetadataStatus = "removed" | "present" | "not-detected";
 
@@ -26,46 +26,10 @@ export type MetadataComparison = {
 
 type Detected = Record<string, string>;
 
-const OMIT_KEYS = new Set(["FileType", "Image Width", "Image Height", "Bits Per Sample", "Color Components", "Subsampling"]);
-const MAX_VALUE_LENGTH = 180;
-
-function displayValue(value: unknown): string {
-  if (typeof value === "string") return value.slice(0, MAX_VALUE_LENGTH);
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return value.map((item) => displayValue(item)).join(", ").slice(0, MAX_VALUE_LENGTH);
-  return "detected";
-}
-
-function tagValue(tag: unknown): string {
-  if (!tag || typeof tag !== "object") return displayValue(tag);
-  const record = tag as { description?: unknown; value?: unknown };
-  return displayValue(record.description ?? record.value ?? "detected");
-}
-
-function flattenExifTags(tags: ExpandedTags): Detected {
-  const result: Detected = {};
-  const groups = ["exif", "iptc", "xmp", "gps", "photoshop", "makerNotes", "composite", "jfif", "pngText", "riff", "gif"] as const;
-  for (const group of groups) {
-    const section = tags[group] as Record<string, unknown> | undefined;
-    if (!section) continue;
-    for (const [name, tag] of Object.entries(section)) {
-      if (name === "_raw" || OMIT_KEYS.has(name)) continue;
-      result[`${group}.${name}`] = tagValue(tag);
-    }
-  }
-  return result;
-}
-
 async function inspectImage(file: File): Promise<Detected> {
-  try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const tags = await ExifReader.load(bytes, { expanded: true, async: true, includeUnknown: false });
-    const extension = file.name.split(".").pop()?.toLowerCase();
-    const structure = extension === "jpg" || extension === "jpeg" ? inspectJpegStructure(bytes) : extension === "png" ? inspectPngStructure(bytes) : extension === "gif" ? inspectGifStructure(bytes) : inspectWebpStructure(bytes);
-    return { ...structure, ...flattenExifTags(tags) };
-  } catch {
-    return {};
-  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  return extension === "jpg" || extension === "jpeg" ? inspectJpegStructure(bytes) : extension === "png" ? inspectPngStructure(bytes) : extension === "gif" ? inspectGifStructure(bytes) : inspectWebpStructure(bytes);
 }
 
 function textFromBytes(bytes: Uint8Array): string {
@@ -164,20 +128,6 @@ function inspectWebpStructure(bytes: Uint8Array): Detected {
   return result;
 }
 
-function addMarkerFields(text: string, markers: Array<[string, string]>, result: Detected) {
-  for (const [key, label] of markers) {
-    if (text.includes(key)) result[label] = "detected";
-  }
-}
-
-function hasBytes(bytes: Uint8Array, pattern: number[]): boolean {
-  outer: for (let i = 0; i <= bytes.length - pattern.length; i++) {
-    for (let j = 0; j < pattern.length; j++) if (bytes[i + j] !== pattern[j]) continue outer;
-    return true;
-  }
-  return false;
-}
-
 async function inspectPdf(file: File): Promise<Detected> {
   const result: Detected = {};
   const pdfDoc = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
@@ -214,36 +164,45 @@ async function inspectDocx(file: File): Promise<Detected> {
       if (new RegExp(`(?:[>:])${field}(?:\\s|>)`, "i").test(xml)) result[`${label}.${field}`] = "detected";
     }
   }
+  // The cleaner also sanitizes identity-bearing data in WordprocessingML
+  // stories. Inspect the XML content directly, not ZIP bytes (rewriting a ZIP
+  // can change compression/timestamps without changing metadata).
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir || !/^word\/.*\.xml$/i.test(entry.name)) continue;
+    const xml = await entry.async("string");
+    if (/<[\w.-]+:rsids\b|\s(?:[\w.-]+:)?(?:author|initials|providerId|userId|personId|date(?:Utc)?|durableId|rsid[A-Za-z0-9_.-]*)\s*=/i.test(xml)) {
+      result["DOCX.Word XML identity fields"] = "detected";
+      break;
+    }
+  }
   return result;
 }
 
 async function inspectContainer(file: File): Promise<Detected> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const text = textFromBytes(bytes);
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   const result: Detected = {};
-  if (ext === "mp3" || ext === "aac") {
-    addMarkerFields(text, [["ID3", "ID3.header"], ["TIT2", "ID3.title"], ["TPE1", "ID3.artist"], ["TALB", "ID3.album"], ["TDRC", "ID3.date"], ["COMM", "ID3.comment"], ["TXXX", "ID3.user-defined"], ["WXXX", "ID3.link"], ["GEOB", "ID3.embedded-object"], ["APIC", "ID3.picture"], ["TAG", "ID3v1.tag"]], result);
-  } else if (ext === "wav") {
-    addMarkerFields(text, [["LIST", "RIFF.LIST"], ["INFO", "RIFF.INFO"], ["ICMT", "RIFF.comment"], ["INAM", "RIFF.title"], ["IART", "RIFF.artist"], ["IPRD", "RIFF.product"], ["ICRD", "RIFF.date"], ["ISFT", "RIFF.software"]], result);
-  } else if (ext === "flac") {
-    addMarkerFields(text, [["VORBIS_COMMENT", "FLAC.Vorbis-comment"], ["PICTURE", "FLAC.picture"], ["CUESHEET", "FLAC.cuesheet"], ["STREAMINFO", "FLAC.streaminfo"]], result);
-  } else if (ext === "webm" || ext === "mkv") {
-    addMarkerFields(text, [["Title", "Matroska.title"], ["Author", "Matroska.author"], ["Comment", "Matroska.comment"], ["DateUTC", "Matroska.date"], ["WritingApp", "Matroska.writing-application"], ["MuxingApp", "Matroska.muxing-application"], ["Location", "Matroska.location"], ["Tags", "Matroska.tags"]], result);
-  } else {
-    addMarkerFields(text, [["©nam", "QuickTime.title"], ["©ART", "QuickTime.artist"], ["©alb", "QuickTime.album"], ["©day", "QuickTime.date"], ["©cmt", "QuickTime.comment"], ["©too", "QuickTime.encoder"], ["©xyz", "QuickTime.location"], ["location.ISO6709", "QuickTime.location.ISO6709"], ["com.apple.quicktime.location", "QuickTime.location"]], result);
-  }
+  const cleaned = await stripContainerMetadata(file);
+  if (cleaned && !await filesEqual(file, cleaned)) result[`${ext.toUpperCase()}.cleaner-targeted container metadata`] = "detected";
   return result;
+}
+
+async function filesEqual(left: Blob, right: Blob): Promise<boolean> {
+  if (left.size !== right.size) return false;
+  const [leftBytes, rightBytes] = await Promise.all([left.arrayBuffer(), right.arrayBuffer()]);
+  const a = new Uint8Array(leftBytes);
+  const b = new Uint8Array(rightBytes);
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 async function inspect(file: File, kind: FileKind | undefined): Promise<{ fields: Detected; limitations: string[]; format: string }> {
   const ext = file.name.split(".").pop()?.toUpperCase() ?? "UNKNOWN";
   if (kind === "jpeg" || kind === "image" || kind === "gif") {
-    return { fields: await inspectImage(file), limitations: ["The browser reader reports metadata it can decode; binary payloads and unsupported vendor-specific blocks may not be listed."], format: ext };
+    return { fields: await inspectImage(file), limitations: ["Detection is based on targeted JPEG markers, PNG/WebP chunks, and GIF extension blocks; metadata stored in unsupported private blocks may not be listed."], format: ext };
   }
   if (kind === "pdf") return { fields: await inspectPdf(file), limitations: ["The comparison checks standard PDF document-info keys visible in the file bytes; embedded-object metadata is not inspected."], format: ext };
   if (kind === "docx") return { fields: await inspectDocx(file), limitations: ["The comparison checks DOCX core, application, and custom property parts; metadata inside embedded documents is not inspected."], format: ext };
-  if (kind === "container") return { fields: await inspectContainer(file), limitations: ["The comparison checks common textual/container metadata markers for this format; codec-private and binary vendor blocks are not fully enumerated."], format: ext };
+  if (kind === "container") return { fields: await inspectContainer(file), limitations: ["Audio/video detection compares the file with its matching local container cleaner, so findings correspond to structures that cleaner changes; untouched codec-private/vendor data is outside this comparison."], format: ext };
   return { fields: {}, limitations: ["This file type is not supported by the browser comparison reader."], format: ext };
 }
 

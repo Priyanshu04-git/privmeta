@@ -2,6 +2,7 @@
 import { ThemeToggle } from "./ThemeToggle";
 import Link from "next/link";
 import Typography from "./Typography";
+import { Github } from "lucide-react";
 
 const Logo = () => (
   <svg viewBox="0 0 53 53" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" className="h-[0.9em] w-auto text-foreground">
@@ -9,6 +10,20 @@ const Logo = () => (
     <path d="M6.0004 21.2998C9.7004 26.8998 14.8004 31.3998 21.1004 34.3998C26.2004 36.7998 30.1004 41.2998 31.9004 46.6998L32.4004 48.3998C30.5004 50.0998 28.2004 51.3998 25.7004 52.1998L24.2004 52.6998C24.1004 52.4998 24.0004 52.1998 24.0004 51.9998C21.6004 45.1998 16.7004 39.6998 10.1004 36.5998C5.50039 34.3998 2.0004 30.3998 0.500397 25.5998L0.000396729 24.0998C2.1004 23.4998 4.1004 22.4998 6.0004 21.2998Z" />
     <path d="M36.4 43.1998C33.9 37.1998 29.3 32.2998 23.4 29.4998C18 26.8998 13.5 22.8998 10.4 17.9998C12.7 15.7998 14.6 13.2998 16 10.2998C19.7 17.0998 25.5 22.5998 32.6 25.9998C36.7 27.8998 40 31.1998 42 35.1998C39.8 37.2998 38 39.8998 36.6 42.7998C36.6 42.7998 36.5 42.9998 36.4 43.1998Z" />
   </svg>
+);
+
+const SourceLink = () => (
+  <a
+    href="https://github.com/Priyanshu04-git/privmeta"
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label="PrivMeta source repository on GitHub"
+    title="Source on GitHub"
+    className="inline-flex h-12 items-center justify-center gap-2 rounded-md px-(--space-md) text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
+    <Github className="size-5" aria-hidden="true" />
+    <span className="hidden sm:inline">Source</span>
+  </a>
 );
 
 const Navbar = () => {
@@ -25,11 +40,13 @@ const Navbar = () => {
             </span>
           </Link>
           <div className="flex gap-(--space-md) sm:hidden">
+            <SourceLink />
             <ThemeToggle />
           </div>
         </div>
 
         <div className="gap-(--space-md) hidden sm:flex">
+          <SourceLink />
           <ThemeToggle />
         </div>
       </nav>
