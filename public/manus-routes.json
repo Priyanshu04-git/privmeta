@@ -1,0 +1,1 @@
+{"routes":[{"path":"/","title":"PrivMeta"},{"path":"/how-it-works","title":"How It Works"},{"path":"/blog","title":"Blog"},{"path":"/blog/:slug","title":"Blog Article"}]}

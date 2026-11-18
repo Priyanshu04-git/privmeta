@@ -1,0 +1,150 @@
+import { remark } from "remark";
+import remarkGfm from "remark-gfm";
+import html from "remark-html";
+import Link from "next/link";
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import Typography from "@/components/Typography";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { getPost, getPostSlugs } from "@/lib/blog";
+
+async function getPostData(slug: string) {
+  const post = getPost(slug);
+  if (!post) return null;
+
+  const processedContent = await remark().use(remarkGfm).use(html).process(post.content);
+  return { ...post, contentHtml: processedContent.toString() };
+}
+
+export async function generateStaticParams() {
+  return getPostSlugs().map((slug) => ({ slug }));
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const post = await getPostData(slug);
+
+  if (!post) {
+    return {
+      title: "Post Not Found | PrivMeta Blog",
+      description: "The requested blog post could not be found.",
+      robots: { index: false, follow: false },
+    };
+  }
+
+  const url = `https://www.privmeta.com/blog/${slug}`;
+
+  return {
+    title: `${post.title} | PrivMeta`,
+    description: post.description,
+    alternates: { canonical: url },
+    openGraph: {
+      title: post.title,
+      description: post.description,
+      url,
+      siteName: "PrivMeta",
+      type: "article",
+      publishedTime: post.date,
+      modifiedTime: post.updated || post.date,
+      authors: ["PrivMeta"],
+      images: [{ url: "/og-image.png", width: 1200, height: 628, alt: post.title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: post.title,
+      description: post.description,
+      images: ["/og-image.png"],
+    },
+  };
+}
+
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await getPostData(slug);
+
+  if (!post) {
+    notFound();
+  }
+
+  const url = `https://www.privmeta.com/blog/${slug}`;
+
+  const articleSchema = {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: post.title,
+    description: post.description,
+    datePublished: post.date,
+    dateModified: post.updated || post.date,
+    url,
+    author: { "@type": "Organization", name: "PrivMeta", url: "https://www.privmeta.com/" },
+    publisher: { "@type": "Organization", name: "PrivMeta", url: "https://www.privmeta.com/" },
+    mainEntityOfPage: { "@type": "WebPage", "@id": url },
+  };
+
+  const breadcrumbSchema = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: "https://www.privmeta.com/" },
+      { "@type": "ListItem", position: 2, name: "Blog", item: "https://www.privmeta.com/blog" },
+      { "@type": "ListItem", position: 3, name: post.title, item: url },
+    ],
+  };
+
+  return (
+    <div className="w-full flex flex-col gap-(--fluid-xl-3xl) py-(--fluid-lg-3xl)">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(articleSchema) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }} />
+
+      {/* Breadcrumb navigation */}
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink asChild>
+              <Link href="/">Home</Link>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbLink asChild>
+              <Link href="/blog">Blog</Link>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>{post.title}</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+
+      {/* Post header */}
+      <div className="flex flex-col gap-(--space-md)">
+        <Typography variant="label" muted>
+          {post.date
+            ? new Date(post.date).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })
+            : ""}{" "}
+          · {post.readingTime} min read
+        </Typography>
+        <Typography as="h1" variant="h1">
+          {post.title}
+        </Typography>
+      </div>
+
+      <div className="h-0.75 w-full bg-foreground" />
+
+      {/* Article content */}
+      <article className="w-full max-w-none prose prose-lg" dangerouslySetInnerHTML={{ __html: post.contentHtml }} />
+    </div>
+  );
+}

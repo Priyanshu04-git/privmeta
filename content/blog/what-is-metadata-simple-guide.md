@@ -1,0 +1,62 @@
+---
+title: "What Is Metadata? Hidden Data Explained"
+description: "Metadata is hidden data in every photo, document, and PDF: your location, name, edit history and more. Remove it free in your browser. No sign-up needed."
+date: "2025-11-20"
+updated: "2026-08-29"
+---
+
+Metadata is "data about data", information that describes other information. Think of it like a digital ID card for your files. Just like your ID card has your name, photo, and birth date without containing your actual body, metadata describes a file without being the main content.
+
+## Common Examples of Metadata
+
+1. **Photos**:
+
+   - Where and when taken (GPS coordinates, timestamp)
+   - Camera model and settings
+   - People identified (facial recognition data)
+
+2. **Documents**:
+
+   - Author name and creation date
+   - Document version history
+   - Comments and tracked changes
+
+3. **Emails**:
+   - Sender and recipient addresses
+   - Timestamps for sending/receiving
+   - Email server routing information
+
+## Why Metadata Matters for Privacy
+
+Metadata can reveal sensitive information even when the main content seems harmless:
+
+- A photo's GPS coordinates can reveal your home address
+- Document authorship can expose confidential sources
+- File creation dates can track your activities
+
+## The PrivMeta Solution
+
+If you want to remove documented metadata structures without sending file bytes to a processing service, **PrivMeta** runs its cleaners in your browser. The website may make ordinary asset and operational-telemetry requests, but the cleaning path does not upload file contents or file names.
+
+Try PrivMeta today to:
+
+- [Remove hidden location data from photos](/blog/how-to-strip-metadata-from-photos)
+- [Strip authorship details from Word documents](/blog/remove-metadata-from-word-document)
+- [Clean metadata from PDFs](/blog/remove-metadata-from-pdf-guide)
+- [Remove metadata from audio files](/blog/remove-metadata-from-audio-files)
+- Maintain full control of your private information
+
+## Simple Metadata Management Tips
+
+1. **Regularly clean files** before sharing
+2. **Disable location services** in camera apps
+3. **Review privacy settings** in document editors
+4. **Use local processing tools** like PrivMeta
+
+Understanding metadata is the first step to digital privacy. By being aware of these hidden details and using the right tools, you can take control of your personal information.
+
+## Remove Your File Metadata Now
+
+Now you know what metadata is and what it can reveal. [PrivMeta](/) removes documented metadata structures from its supported photo, document, PDF, video and audio formats in your browser without uploading file bytes.
+
+[Remove Metadata Free](/)

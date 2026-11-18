@@ -1,0 +1,15 @@
+import Typography from "./Typography";
+
+const Footer = () => {
+  return (
+    <footer className="flex items-center xl:py-(--space-3xl) pt-(--space-2xl) pb-(--space-lg)">
+      <div className="w-full flex flex-col gap-(--space-lg) sm:flex-row sm:justify-between sm:items-end">
+        <Typography variant="footer" muted>
+          Built for everyday digital hygiene.
+        </Typography>
+      </div>
+    </footer>
+  );
+};
+
+export default Footer;

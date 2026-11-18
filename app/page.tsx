@@ -1,0 +1,318 @@
+"use client";
+import { Button } from "@/components/ui/button";
+import Dropzone, { type FileStatus, type StoredFile } from "@/components/Dropzone";
+import { useState, useEffect } from "react";
+import {
+  MAX_FILE_COUNT,
+  MAX_FILE_SIZE_MB,
+  MAX_TOTAL_FILE_SIZE_BYTES,
+  MAX_TOTAL_FILE_SIZE_MB,
+  getKindForFilename,
+  getTotalFileSizeBytes,
+} from "@/utils/constants";
+import { getFileExtensions } from "@/utils/utils";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
+import JSZip from "jszip";
+import ClearAllButton from "@/components/ClearAllButton";
+import ShareFunctions from "@/components/ShareFunctions";
+import Hero from "@/components/Hero";
+import MetadataComparisonPanel from "@/components/MetadataComparisonPanel";
+import type { MetadataComparison } from "@/utils/metadataComparison";
+
+type ErrorType =
+  | "file_count"
+  | "unsupported_format"
+  | "file_too_large"
+  | "batch_too_large"
+  | "animated_image"
+  | "general"
+  | "dropzone_error";
+
+const renameWithSuffix = (file: File, suffix = "_cleaned"): string => {
+  const nameParts = file.name.split(".");
+  if (nameParts.length < 2) return `${file.name}${suffix}`;
+  const ext = nameParts.pop();
+  const base = nameParts.join(".");
+  return `${base}${suffix}.${ext}`;
+};
+
+const showErrorToast = (type: ErrorType) => {
+  const messages: Record<ErrorType, { title: string; description: string; severity: "warning" | "error" }> = {
+    file_count: {
+      title: "Too many files",
+      description: `You can only queue up to ${MAX_FILE_COUNT} files.`,
+      severity: "warning",
+    },
+    unsupported_format: {
+      title: "Unsupported file format",
+      description: `Supported file types: ${getFileExtensions()}`,
+      severity: "warning",
+    },
+    file_too_large: {
+      title: "File too large",
+      description: `Each file can be up to ${MAX_FILE_SIZE_MB} MB.`,
+      severity: "warning",
+    },
+    batch_too_large: {
+      title: "Batch too large",
+      description: `Queued files can total up to ${MAX_TOTAL_FILE_SIZE_MB} MB. Remove a file or choose a smaller batch.`,
+      severity: "warning",
+    },
+    animated_image: {
+      title: "Animated image not supported",
+      description: "Animated PNG and WebP files are rejected because browser cleaning would flatten them to one frame.",
+      severity: "warning",
+    },
+    general: {
+      title: "Something went wrong",
+      description: "An error occurred while processing your files.",
+      severity: "error",
+    },
+    dropzone_error: {
+      title: "Couldn't queue files",
+      description: "An error occurred while queuing your files.",
+      severity: "error",
+    },
+  };
+
+  const { title, description, severity } = messages[type];
+
+  const show = severity === "warning" ? toast.warning : toast.error;
+
+  show(title, {
+    description,
+    duration: 5000,
+    dismissible: true,
+  });
+};
+
+export default function Home() {
+  const [fileStore, setFileStore] = useState<StoredFile[]>([]);
+  const [fileStatuses, setFileStatuses] = useState<Record<string, FileStatus>>({});
+  const [processedPairs, setProcessedPairs] = useState<Record<string, { original: File; cleaned: File; comparison?: MetadataComparison }>>({});
+  const [comparisonLoading, setComparisonLoading] = useState<Record<string, boolean>>({});
+  const [processing, setProcessing] = useState<boolean>(false);
+
+  const showSuccessfulDownloadToast = () => {
+    toast.success("Download ready");
+  };
+
+  const handleFilesAccepted = (newFiles: File[]) => {
+    const totalCount = fileStore.length + newFiles.length;
+    if (totalCount > MAX_FILE_COUNT) {
+      showErrorToast("file_count");
+      return;
+    }
+
+    const totalSize = getTotalFileSizeBytes([
+      ...fileStore.map(({ file }) => file),
+      ...newFiles,
+    ]);
+    if (totalSize > MAX_TOTAL_FILE_SIZE_BYTES) {
+      showErrorToast("batch_too_large");
+      return;
+    }
+
+    const wrapped: StoredFile[] = newFiles.map((file) => ({ id: crypto.randomUUID(), file }));
+    setFileStore((prevFiles) => [...prevFiles, ...wrapped].slice(0, MAX_FILE_COUNT));
+    toast.success(newFiles.length <= 1 ? "1 File queued" : `${newFiles.length} files queued`, {
+      duration: 1700,
+    });
+  };
+
+  const handleFileRemoved = (id: string) => {
+    setFileStore((prevFiles) => prevFiles.filter((stored) => stored.id !== id));
+    setProcessedPairs((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setFileStatuses((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const handleMetadataRemoval = async () => {
+    setProcessing(true);
+    setFileStatuses({});
+    setProcessedPairs({});
+    setComparisonLoading({});
+
+    await new Promise((res) => setTimeout(res, 1000));
+
+    const { stripImageMetadata, stripGifMetadata, stripPdfMetadata, stripDocxMetadata, stripContainerMetadata, stripJpegMetadata } =
+      await import("@/utils/stripMetadata");
+    const { inspectRasterAnimation } = await import("@/utils/imageAnimation");
+
+    try {
+      const cleanedFiles: File[] = [];
+      let failedCount = 0;
+      let animatedCount = 0;
+      let animatedWarningShown = false;
+
+      for (const { id, file } of fileStore) {
+        setFileStatuses((prev) => ({ ...prev, [id]: "processing" }));
+
+        let cleaned: File | null = null;
+
+        switch (getKindForFilename(file.name)) {
+          case "jpeg":
+            cleaned = await stripJpegMetadata(file);
+            break;
+          case "image": {
+            const animationStatus = await inspectRasterAnimation(file);
+            if (animationStatus === "animated") {
+              if (!animatedWarningShown) {
+                showErrorToast("animated_image");
+                animatedWarningShown = true;
+              }
+              setFileStatuses((prev) => ({ ...prev, [id]: "failed" }));
+              failedCount++;
+              animatedCount++;
+              continue;
+            }
+            cleaned = await stripImageMetadata(file, animationStatus);
+            break;
+          }
+          case "gif":
+            cleaned = await stripGifMetadata(file);
+            break;
+          case "pdf":
+            cleaned = await stripPdfMetadata(file);
+            break;
+          case "docx":
+            cleaned = await stripDocxMetadata(file);
+            break;
+          case "container":
+            cleaned = await stripContainerMetadata(file);
+            break;
+          default:
+            showErrorToast("unsupported_format");
+            setFileStatuses((prev) => ({ ...prev, [id]: "failed" }));
+            failedCount++;
+            continue;
+        }
+
+        if (cleaned) {
+          const renamed = new File([cleaned], renameWithSuffix(file), {
+            type: cleaned.type,
+          });
+          cleanedFiles.push(renamed);
+          setProcessedPairs((prev) => ({ ...prev, [id]: { original: file, cleaned: renamed } }));
+          setFileStatuses((prev) => ({ ...prev, [id]: "done" }));
+        } else {
+          setFileStatuses((prev) => ({ ...prev, [id]: "failed" }));
+          failedCount++;
+        }
+      }
+
+      if (cleanedFiles.length === 1) {
+        const file = cleanedFiles[0];
+        const url = URL.createObjectURL(file);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (cleanedFiles.length > 1) {
+        const zip = new JSZip();
+        cleanedFiles.forEach((file) => zip.file(file.name, file));
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "PrivMeta_cleaned.zip";
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      if (failedCount === 0 && cleanedFiles.length > 0) {
+        showSuccessfulDownloadToast();
+      } else if (cleanedFiles.length > 0) {
+        toast.warning(`Download ready - ${failedCount} file${failedCount > 1 ? "s" : ""} failed to process`);
+      } else if (animatedCount !== failedCount) {
+        showErrorToast("general");
+      }
+    } catch (error) {
+      console.error("Error during metadata removal:", error);
+      showErrorToast("general");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleCompare = async (id: string) => {
+    const pair = processedPairs[id];
+    if (!pair || comparisonLoading[id]) return;
+    setComparisonLoading((prev) => ({ ...prev, [id]: true }));
+    try {
+      const { compareMetadata } = await import("@/utils/metadataComparison");
+      const comparison = await compareMetadata(pair.original, pair.cleaned);
+      setProcessedPairs((prev) => ({ ...prev, [id]: { ...pair, comparison } }));
+    } catch (error) {
+      console.error("Metadata comparison failed:", error);
+      toast.error("Comparison unavailable", { description: "The files were cleaned successfully, but their local metadata report could not be generated." });
+    } finally {
+      setComparisonLoading((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  useEffect(() => {
+    document.title = processing ? "Cleaning metadata..." : "Free & Private Metadata Remover";
+  }, [processing]);
+
+  return (
+    <div className="w-full flex flex-col gap-(--fluid-xl-3xl) h-full items-center py-(--fluid-md-2xl)">
+      <Hero />
+      <div className="w-full flex flex-col gap-(--fluid-lg-xl)">
+        <Dropzone
+          processing={processing}
+          fileStore={fileStore}
+          fileStatuses={fileStatuses}
+          onFilesAccepted={handleFilesAccepted}
+          onFileRemove={handleFileRemoved}
+          onError={(type: ErrorType) => showErrorToast(type)}
+        />
+        <div className="w-full flex justify-end gap-(--space-md)">
+          <ClearAllButton fileStore={fileStore} setFileStore={setFileStore} processing={processing} />
+          <Button
+            className="type-fluid type-button-lg p-(--fluid-md-xl)"
+            disabled={fileStore.length <= 0 || processing}
+            onClick={handleMetadataRemoval}
+          >
+            {processing && <Loader2 className="animate-spin mr-2" />}
+            Remove metadata
+          </Button>
+        </div>
+        {fileStore.some(({ id }) => fileStatuses[id] === "done") && (
+          <section className="w-full rounded-xl border border-border bg-card p-(--fluid-md-xl)" aria-label="Metadata comparison results">
+            <div className="mb-4">
+              <h2 className="type-fluid type-heading-md">Proof-oriented comparison</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Compare the original and cleaned pair locally. Nothing is uploaded, and the result shown here lists only metadata detectable by the browser reader.</p>
+            </div>
+            <div className="flex flex-col gap-4">
+              {fileStore.filter(({ id }) => fileStatuses[id] === "done" && processedPairs[id]).map(({ id, file }) => {
+                const pair = processedPairs[id];
+                if (!pair) return null;
+                return (
+                  <div key={id} className="rounded-lg border border-border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div><p className="font-medium">{file.name}</p><p className="text-xs text-muted-foreground">Processed as {pair.cleaned.name}</p></div>
+                      <MetadataComparisonPanel loading={comparisonLoading[id]} onCompare={() => handleCompare(id)} />
+                    </div>
+                    {pair.comparison && <MetadataComparisonPanel comparison={pair.comparison} onCompare={() => handleCompare(id)} />}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+      </div>
+      <div className="h-0.75 w-full bg-foreground" />
+      <ShareFunctions />
+    </div>
+  );
+}
